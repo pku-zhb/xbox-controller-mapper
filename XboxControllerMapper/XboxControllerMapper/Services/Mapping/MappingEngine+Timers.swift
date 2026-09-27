@@ -104,7 +104,7 @@ extension MappingEngine {
         inputLogService?.log(buttons: [button], type: .singlePress, action: mapping.feedbackString)
 
         let timer = DispatchSource.makeTimerSource(queue: inputQueue)
-        timer.schedule(deadline: .now() + interval, repeating: interval)
+        timer.schedule(deadline: .now() + max(interval, mapping.repeatMapping?.initialDelay ?? 0.35), repeating: interval)
         timer.setEventHandler { [weak self] in
             guard let self = self else { return }
             self.inputSimulator.executeMapping(mapping)
@@ -146,7 +146,7 @@ extension MappingEngine {
         state.lock.unlock()
 
         let timer = DispatchSource.makeTimerSource(queue: inputQueue)
-        timer.schedule(deadline: .now() + interval, repeating: interval)
+        timer.schedule(deadline: .now() + max(interval, mapping.holdRepeatInitialDelay), repeating: interval)
         timer.setEventHandler { [weak self] in
             self?.inputSimulator.keyDown(keyCode, modifiers: modifiers)
         }

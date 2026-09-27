@@ -168,6 +168,8 @@ final class ControllerStorage: @unchecked Sendable {
     /// Mirrors `Profile.touchpadInputMode`. Read by the touchpad input pipeline
     /// to decide which button events to fire (whole-pad or quadrant variants).
     /// Updated by MappingEngine on profile change.
+    var touchpadTuning: TouchpadTuning = .default
+    var touchpadMotionGeneration: UInt64 = 0
     var touchpadInputMode: TouchpadInputMode = .wholePad
 
     /// Tracks which quadrant the touchpad's physical click is currently in,

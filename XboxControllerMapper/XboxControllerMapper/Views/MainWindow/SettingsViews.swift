@@ -721,6 +721,7 @@ struct TouchpadSettingsView: View {
 
     var body: some View {
         Form {
+            TouchpadFeelControls()
 			Section(isAppleTVRemote ? "Touch Surface Cursor" : "Touchpad Cursor") {
                 Toggle(isOn: Binding(
                     get: { settings.disableTouchpadAsMouse },

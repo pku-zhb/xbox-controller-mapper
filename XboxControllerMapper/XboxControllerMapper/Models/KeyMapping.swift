@@ -214,6 +214,7 @@ struct KeyMapping: Codable, Equatable, ExecutableAction {
     var holdRepeatEnabled: Bool
 
     /// Interval between re-posted keyDown events when holdRepeatEnabled is true (default ~30/s)
+    var holdRepeatInitialDelay: TimeInterval
     var holdRepeatInterval: TimeInterval
     
     /// Optional ID of a macro to execute instead of key press
@@ -244,6 +245,7 @@ struct KeyMapping: Codable, Equatable, ExecutableAction {
         isHoldModifier: Bool = false,
         holdRepeatEnabled: Bool = false,
         holdRepeatInterval: TimeInterval = 0.033,
+        holdRepeatInitialDelay: TimeInterval = 0.35,
         macroId: UUID? = nil,
         scriptId: UUID? = nil,
         systemCommand: SystemCommand? = nil,
@@ -259,6 +261,7 @@ struct KeyMapping: Codable, Equatable, ExecutableAction {
 		self.scrollActionSettings = scrollActionSettings
         self.isHoldModifier = isHoldModifier
         self.holdRepeatEnabled = holdRepeatEnabled
+        self.holdRepeatInitialDelay = max(0, min(2, holdRepeatInitialDelay.isFinite ? holdRepeatInitialDelay : 0.35))
         self.holdRepeatInterval = holdRepeatInterval
         self.macroId = macroId
         self.scriptId = scriptId
@@ -269,7 +272,7 @@ struct KeyMapping: Codable, Equatable, ExecutableAction {
     }
 
     private enum CodingKeys: String, CodingKey {
-		case keyCode, modifiers, longHoldMapping, doubleTapMapping, repeatMapping, scrollActionSettings, isHoldModifier, holdRepeatEnabled, holdRepeatInterval, macroId, scriptId, systemCommand, midiControlChange, hint, hapticStyle
+		case keyCode, modifiers, longHoldMapping, doubleTapMapping, repeatMapping, scrollActionSettings, isHoldModifier, holdRepeatEnabled, holdRepeatInterval, holdRepeatInitialDelay, macroId, scriptId, systemCommand, midiControlChange, hint, hapticStyle
     }
 
     init(from decoder: Decoder) throws {
@@ -282,6 +285,7 @@ struct KeyMapping: Codable, Equatable, ExecutableAction {
 		scrollActionSettings = try container.decodeIfPresent(ScrollActionSettings.self, forKey: .scrollActionSettings)
         isHoldModifier = try container.decode(.isHoldModifier, default: false)
         holdRepeatEnabled = try container.decode(.holdRepeatEnabled, default: false)
+        holdRepeatInitialDelay = try container.decode(.holdRepeatInitialDelay, default: 0.35, clampedTo: 0...2)
         holdRepeatInterval = try container.decode(.holdRepeatInterval, default: 0.033)
         macroId = try container.decodeIfPresent(UUID.self, forKey: .macroId)
         scriptId = try container.decodeIfPresent(UUID.self, forKey: .scriptId)
@@ -613,6 +617,7 @@ struct RepeatMapping: Codable, Equatable {
     /// Whether repeat is enabled
     var enabled: Bool
     /// Interval between repeats in seconds (default 0.2s = 5 per second)
+    var initialDelay: TimeInterval
     var interval: TimeInterval
 
     private static func sanitizedInterval(_ interval: TimeInterval) -> TimeInterval {
@@ -620,17 +625,19 @@ struct RepeatMapping: Codable, Equatable {
         return interval
     }
 
-    init(enabled: Bool = false, interval: TimeInterval = 0.2) {
+    init(enabled: Bool = false, interval: TimeInterval = 0.2, initialDelay: TimeInterval = 0.35) {
+        self.initialDelay = max(0, min(2, initialDelay.isFinite ? initialDelay : 0.35))
         self.enabled = enabled
         self.interval = Self.sanitizedInterval(interval)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, interval
+        case enabled, interval, initialDelay
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        initialDelay = try container.decode(.initialDelay, default: 0.35, clampedTo: 0...2)
         enabled = try container.decode(.enabled, default: false)
         interval = Self.sanitizedInterval(try container.decode(.interval, default: Self.defaultInterval))
     }

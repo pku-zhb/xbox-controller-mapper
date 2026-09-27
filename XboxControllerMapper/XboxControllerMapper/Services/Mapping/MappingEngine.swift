@@ -62,6 +62,8 @@ class MappingEngine: ObservableObject {
     let state = EngineState()
 
     struct RoutingBoundaryCleanup {
+        let scrollEndEvents: [ScrollEvent]
+        let endDesktopMagnify: Bool
 		let heldMappings: [KeyMapping]
 		let leftKeys: Set<CGKeyCode>
 		let rightKeys: Set<CGKeyCode>
@@ -73,6 +75,8 @@ class MappingEngine: ObservableObject {
 			releaseAllModifiers: Bool = false,
 			preservingHeldActionsFor preservedHeldButtons: Set<ControllerButton> = []
 		) {
+			scrollEndEvents = state.desktopScroll.endEvents
+            endDesktopMagnify = state.desktopZoom.nativeActive
 			heldMappings = state.heldButtons.compactMap { button, mapping in
 				preservedHeldButtons.contains(button) ? nil : mapping
 			}
@@ -282,6 +286,7 @@ class MappingEngine: ObservableObject {
     /// active profile changes.
     private func syncTouchpadSettings(from profile: Profile?) {
         let settings = profile?.joystickSettings ?? .default
+        controllerService.writeStorage(\.touchpadTuning, settings.touchpadTuning)
         controllerService.requireActiveTouchForRegionClick = settings.requireActiveTouchForRegionClick
 		controllerService.appleTVRemoteCircularScrollEnabled = settings.appleTVRemoteCircularScrollEnabled
         controllerService.touchpadInputMode = profile?.touchpadInputMode ?? .wholePad
@@ -292,6 +297,7 @@ class MappingEngine: ObservableObject {
         // profile-based overload yet. Falls back to whole-pad mode since we
         // don't know the active profile here.
         let settings = settings ?? .default
+        controllerService.writeStorage(\.touchpadTuning, settings.touchpadTuning)
         controllerService.requireActiveTouchForRegionClick = settings.requireActiveTouchForRegionClick
 		controllerService.appleTVRemoteCircularScrollEnabled = settings.appleTVRemoteCircularScrollEnabled
     }
@@ -524,6 +530,8 @@ class MappingEngine: ObservableObject {
 	}
 
     nonisolated func performRoutingBoundaryCleanup(_ cleanup: RoutingBoundaryCleanup) {
+        for event in cleanup.scrollEndEvents { inputSimulator.scroll(event: event) }
+        if cleanup.endDesktopMagnify { postMagnifyGestureEvent(0, 2) }
 		for mapping in cleanup.heldMappings {
 			stopHeldAction(mapping)
 		}
@@ -1911,8 +1919,12 @@ class MappingEngine: ObservableObject {
 				self.handleControllerInputEvent(event)
 			}
 		case .polling:
+            let motionGeneration = controllerService.readStorage(\.touchpadMotionGeneration)
 			pollingQueue.async { [weak self] in
-				self?.handleControllerInputEvent(event)
+                guard let self else { return }
+                if case .steamLeftTouchpadMoved = event,
+                   motionGeneration != self.controllerService.readStorage(\.touchpadMotionGeneration) { return }
+				self.handleControllerInputEvent(event)
 			}
 		}
 	}
@@ -1929,7 +1941,14 @@ class MappingEngine: ObservableObject {
 	/// input each sample drains before the next arrives, so per-sample behavior
 	/// is unchanged.
 	nonisolated private func enqueueCoalescedTouchpadMovement(_ delta: CGPoint) {
+        let generation = controllerService.readStorage(\.touchpadMotionGeneration)
 		let shouldSchedule: Bool = state.lock.withLock { () -> Bool in
+            if state.coalescedTouchpadGeneration != generation {
+                state.coalescedTouchpadDelta = .zero
+                state.coalescedTouchpadGeneration = generation
+                state.smoothedTouchpadDelta = .zero
+                state.lastTouchpadSampleTime = 0
+            }
 			state.coalescedTouchpadDelta.x += delta.x
 			state.coalescedTouchpadDelta.y += delta.y
 			if state.touchpadFlushScheduled { return false }
@@ -1939,13 +1958,14 @@ class MappingEngine: ObservableObject {
 		guard shouldSchedule else { return }
 		pollingQueue.async { [weak self] in
 			guard let self else { return }
-			let summed: CGPoint = self.state.lock.withLock { () -> CGPoint in
+			let drained = self.state.lock.withLock { () -> (CGPoint, UInt64) in
 				let accumulated = self.state.coalescedTouchpadDelta
 				self.state.coalescedTouchpadDelta = .zero
 				self.state.touchpadFlushScheduled = false
-				return accumulated
+				return (accumulated, self.state.coalescedTouchpadGeneration)
 			}
-			self.processTouchpadMovement(summed)
+            guard drained.1 == self.controllerService.readStorage(\.touchpadMotionGeneration) else { return }
+			self.processTouchpadMovement(drained.0)
 		}
 	}
 

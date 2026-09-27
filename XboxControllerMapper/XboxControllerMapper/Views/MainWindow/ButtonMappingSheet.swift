@@ -30,6 +30,7 @@ struct ButtonMappingSheet: View {
     @State private var enableDoubleTap = false
     @State private var doubleTapThreshold: Double = 0.4
     @State private var enableRepeat = false
+    @State private var repeatInitialDelay: Double = 0.35
     @State private var repeatRate: Double = 5.0  // Actions per second
     @State private var enableHoldRepeat = false
     @State private var holdRepeatRate: Double = 30.0  // keyDown re-posts per second
@@ -431,6 +432,7 @@ struct ButtonMappingSheet: View {
 									.font(.caption)
 
 								if enableHoldRepeat {
+                                    repeatDelayControl
 									VStack(alignment: .leading, spacing: 8) {
 										HStack {
 											Text("Repeat Rate:")
@@ -830,6 +832,16 @@ struct ButtonMappingSheet: View {
         .cornerRadius(8)
     }
 
+    private var repeatDelayControl: some View {
+        VStack(alignment: .leading) {
+            Text("首次重复等待：\(Int(repeatInitialDelay * 1000)) 毫秒")
+            Slider(value: $repeatInitialDelay, in: 0...1.5, step: 0.05)
+                .accessibilityLabel("Initial Repeat Delay")
+            Text("按下立即执行一次；继续按住到这里设定的时间后，才开始连发。")
+                .font(.caption).foregroundColor(.secondary)
+        }
+    }
+
     // MARK: - Repeat Content
 
     @ViewBuilder
@@ -872,6 +884,7 @@ struct ButtonMappingSheet: View {
             }
         } else if enableRepeat {
             VStack(alignment: .leading, spacing: 8) {
+                repeatDelayControl
                 HStack {
                     Text("Repeat Rate:")
                         .font(.caption)
@@ -976,6 +989,7 @@ struct ButtonMappingSheet: View {
                 primaryState.modifiers = existingMapping.modifiers
 				primaryState.scrollActionSettings = existingMapping.scrollActionSettings
                 isHoldModifier = existingMapping.isHoldModifier
+                repeatInitialDelay = existingMapping.holdRepeatInitialDelay
                 enableHoldRepeat = existingMapping.holdRepeatEnabled
                 if existingMapping.holdRepeatInterval > 0 {
                     holdRepeatRate = 1.0 / existingMapping.holdRepeatInterval
@@ -1028,6 +1042,7 @@ struct ButtonMappingSheet: View {
             if let repeatConfig = existingMapping.repeatMapping, repeatConfig.enabled {
                 enableRepeat = true
                 repeatRate = repeatConfig.ratePerSecond
+                repeatInitialDelay = repeatConfig.initialDelay
             }
         }
     }
@@ -1086,6 +1101,7 @@ struct ButtonMappingSheet: View {
 				isHoldModifier: primaryIsSmoothScrollAction ? false : isHoldModifier,
 				holdRepeatEnabled: primaryIsSmoothScrollAction ? false : isHoldModifier && enableHoldRepeat,
 				holdRepeatInterval: (!primaryIsSmoothScrollAction && enableHoldRepeat) ? 1.0 / holdRepeatRate : 0.033,
+                holdRepeatInitialDelay: repeatInitialDelay,
                 hint: primaryState.hint.isEmpty ? nil : primaryState.hint,
                 hapticStyle: primaryState.hapticStyle
             )
@@ -1093,7 +1109,8 @@ struct ButtonMappingSheet: View {
 			if enableRepeat && !primaryIsSmoothScrollAction {
                 newMapping.repeatMapping = RepeatMapping(
                     enabled: true,
-                    interval: 1.0 / repeatRate
+                    interval: 1.0 / repeatRate,
+                    initialDelay: repeatInitialDelay
                 )
             }
         }

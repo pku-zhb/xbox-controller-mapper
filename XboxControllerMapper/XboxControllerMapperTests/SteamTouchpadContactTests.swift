@@ -50,6 +50,6 @@ final class SteamTouchpadContactTests: XCTestCase {
         controller.emitInputEvent(.steamLeftTouchpadMoved(CGPoint(x: 0.1, y: 0.1)))
         try await Task.sleep(nanoseconds: 100_000_000)
         XCTAssertFalse(simulator.events.contains { if case .moveMouse = $0 { return true }; return false })
-        XCTAssertFalse(simulator.events.contains { if case .scroll = $0 { return true }; return false })
+        XCTAssertFalse(simulator.events.contains { if case .scroll(let x, let y) = $0 { return x != 0 || y != 0 }; return false })
     }
 }

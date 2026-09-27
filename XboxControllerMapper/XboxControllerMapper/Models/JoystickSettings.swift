@@ -273,6 +273,8 @@ struct JoystickSettings: Codable, Equatable {
     var rightStick: StickTuning = .rightDefault
 
     /// Touchpad sensitivity (0.0 - 1.0)
+    var touchpadComparison: TouchpadFeelSnapshot?
+    var touchpadTuning: TouchpadTuning = .default
     var touchpadSensitivity: Double = 0.5
 
     /// Touchpad acceleration curve (0.0 = linear, 1.0 = max acceleration)
@@ -590,6 +592,8 @@ extension JoystickSettings {
         case leftStick
         case rightStick
         // Global fields.
+        case touchpadComparison
+        case touchpadTuning
         case touchpadSensitivity
         case touchpadAcceleration
         case touchpadDeadzone
@@ -653,6 +657,8 @@ extension JoystickSettings {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let unit = 0.0...1.0
 
+        touchpadComparison = try container.decodeIfPresent(TouchpadFeelSnapshot.self, forKey: .touchpadComparison)
+        touchpadTuning = try container.decode(.touchpadTuning, default: .default)
         touchpadSensitivity = try container.decode(.touchpadSensitivity, default: 0.5, clampedTo: unit)
         touchpadAcceleration = try container.decode(.touchpadAcceleration, default: 0.5, clampedTo: unit)
         touchpadDeadzone = try container.decode(.touchpadDeadzone, default: Self.defaultTouchpadDeadzone, clampedTo: 0.0...0.03)
@@ -718,6 +724,8 @@ extension JoystickSettings {
         try container.encode(rightStick, forKey: .rightStick)
 
         // Global fields.
+        try container.encodeIfPresent(touchpadComparison, forKey: .touchpadComparison)
+        try container.encode(touchpadTuning, forKey: .touchpadTuning)
         try container.encode(touchpadSensitivity, forKey: .touchpadSensitivity)
         try container.encode(touchpadAcceleration, forKey: .touchpadAcceleration)
         try container.encode(touchpadDeadzone, forKey: .touchpadDeadzone)

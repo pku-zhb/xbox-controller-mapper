@@ -244,6 +244,7 @@ extension ControllerService {
         controller.onRightTriggerChanged = { [weak self] value, pressed in
             self?.updateRightTrigger(value, pressed: pressed)
         }
+        controller.touchpadTuningProvider = { [weak self] in self?.readStorage(\.touchpadTuning) ?? .default }
         controller.onLeftTouchpadChanged = { [weak self] x, y, isTouching in
             self?.updateSteamTouchpad(side: .left, x: x, y: y, isTouching: isTouching)
         }
@@ -581,7 +582,13 @@ extension ControllerService {
         state: SteamControllerTouchpadState,
         pressed: Bool
     ) {
-        updateSteamTouchpadClickMovementGate(side: side, state: state, pressed: pressed)
+        // The HID motion filter owns press stabilization and drag activation.
+        // Invalidate pointer deltas queued before this physical button edge.
+        storage.lock.lock()
+        storage.touchpadMotionGeneration &+= 1
+        storage.pendingTouchpadDelta = nil
+        storage.touchpadClickFiredDuringTouch = storage.touchpadClickFiredDuringTouch || pressed
+        storage.lock.unlock()
         if pressed {
             playSteamTouchpadClickHaptic(side: side)
         }

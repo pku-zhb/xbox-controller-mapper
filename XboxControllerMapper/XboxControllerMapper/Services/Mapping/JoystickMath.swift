@@ -52,24 +52,27 @@ enum JoystickMath {
     }
 
     /// Velocity-dependent pointer gain. Slow motion gets precision while fast
-    /// swipes retain the existing sensitivity as their ceiling. Using distance
+    /// swipes reach an independently tunable gain. Using distance
     /// per second keeps the curve independent of HID report rate.
     static func touchpadAccelerationGain(
         distance: Double,
         elapsed: TimeInterval,
-        amount: Double
+        amount: Double,
+        slowGain: Double = 0.2, fastGain: Double = 1,
+        startSpeed: Double = 0.25, fullSpeed: Double = 4
     ) -> Double {
         guard distance.isFinite, elapsed.isFinite, amount.isFinite else { return 1 }
         let strength = min(1, max(0, amount))
         guard strength > 0 else { return 1 }
-        let minimumGain = 1 - 0.8 * strength
+        let minimumGain = 1 + (slowGain - 1) * strength
+        let maximumGain = 1 + (fastGain - 1) * strength
         // A fresh touch has no velocity history. Start conservatively instead
         // of interpreting its first position delta as a high-speed flick.
         guard elapsed > 0 else { return minimumGain }
         let speed = max(0, distance) / max(elapsed, 0.001)
-        let t = min(1, max(0, (speed - 0.25) / (4.0 - 0.25)))
+        let t = min(1, max(0, (speed - startSpeed) / max(0.05, fullSpeed - startSpeed)))
         let eased = t * t * (3 - 2 * t)
-        return minimumGain + (1 - minimumGain) * eased
+        return minimumGain + (maximumGain - minimumGain) * eased
     }
 
     /// Horizontal scroll suppression: zeroes X component when Y is dominant.

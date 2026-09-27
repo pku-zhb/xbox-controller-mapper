@@ -85,22 +85,76 @@ struct SteamTouchpadMotionFilter {
     private var anchor: CGPoint?
     private var output = CGPoint.zero
     private var pending: [Sample] = []
+    private var wasPressed = false
+    private var clickAnchor = CGPoint.zero
+    private var clickTime: TimeInterval = 0
+    private var dragging = false
+    private var offset = CGPoint.zero
+    private var touchOrigin = CGPoint.zero
+    private var touchTime: TimeInterval = 0
+    private var tapCandidate = false
 
-    mutating func update(_ raw: SteamControllerTouchpadState, now: TimeInterval) -> SteamControllerTouchpadState {
+    mutating func update(_ raw: SteamControllerTouchpadState, now: TimeInterval, radius: CGFloat = hysteresisRadius, guardTime: TimeInterval = releaseGuardInterval, clickSettle: TimeInterval = 0, dragTravel: Double = 0, tapDuration: TimeInterval = 0, tapTravel: Double = 0) -> SteamControllerTouchpadState {
         guard raw.isTouching else {
             anchor = nil
+            wasPressed = false
+            dragging = false
+            tapCandidate = false
+            offset = .zero
             output = .zero
             pending.removeAll(keepingCapacity: true)
             return raw
         }
 
-        let position = CGPoint(x: CGFloat(raw.x), y: CGFloat(raw.y))
+        let physical = CGPoint(x: CGFloat(raw.x), y: CGFloat(raw.y))
+        if anchor == nil {
+            anchor = physical
+            output = physical
+            touchOrigin = physical
+            touchTime = now
+            tapCandidate = !raw.isPressed && tapTravel > 0
+            wasPressed = raw.isPressed
+            clickAnchor = physical
+            clickTime = now
+            return raw
+        }
+        // A contact that can still become a tap must not move the target first.
+        // Once it becomes a slide, discard the suppressed displacement permanently.
+        if tapCandidate {
+            let travel = Double(hypot(physical.x - touchOrigin.x, physical.y - touchOrigin.y))
+            if !raw.isPressed && now - touchTime < tapDuration && travel < tapTravel {
+                return .init(x: Float(output.x), y: Float(output.y), isTouching: true, isPressed: false)
+            }
+            tapCandidate = false
+            pending.removeAll(keepingCapacity: true)
+            offset = CGPoint(x: output.x - physical.x, y: output.y - physical.y)
+            anchor = output
+        }
+        if dragTravel > 0, raw.isPressed != wasPressed {
+            wasPressed = raw.isPressed
+            pending.removeAll(keepingCapacity: true)
+            clickAnchor = physical
+            clickTime = now
+            dragging = false
+            offset = CGPoint(x: output.x - physical.x, y: output.y - physical.y)
+            anchor = output
+        }
+        if raw.isPressed && !dragging && dragTravel > 0 {
+            let travel = Double(hypot(physical.x - clickAnchor.x, physical.y - clickAnchor.y))
+            if now - clickTime >= clickSettle && travel >= dragTravel {
+                dragging = true
+                offset = CGPoint(x: output.x - physical.x, y: output.y - physical.y)
+                anchor = output
+            }
+            return .init(x: Float(output.x), y: Float(output.y), isTouching: true, isPressed: true)
+        }
+        let position = CGPoint(x: physical.x + offset.x, y: physical.y + offset.y)
         if let center = anchor {
             let dx = position.x - center.x
             let dy = position.y - center.y
             let distance = hypot(dx, dy)
-            if distance > Self.hysteresisRadius {
-                let ratio = (distance - Self.hysteresisRadius) / distance
+            if distance > radius {
+                let ratio = (distance - radius) / distance
                 anchor = CGPoint(x: center.x + dx * ratio, y: center.y + dy * ratio)
             }
             if let last = pending.last, now < last.time {
@@ -109,7 +163,7 @@ struct SteamTouchpadMotionFilter {
             pending.append(Sample(position: anchor ?? position, time: now))
             var ready = 0
             for sample in pending {
-                guard now - sample.time >= Self.releaseGuardInterval else { break }
+                guard now - sample.time >= (raw.isPressed ? 0 : guardTime) else { break }
                 output = sample.position
                 ready += 1
             }
@@ -143,6 +197,8 @@ struct SteamControllerTouchpadTapTracker {
     mutating func update(
         state: SteamControllerTouchpadState,
         now: TimeInterval,
+        maxDuration: TimeInterval = Config.touchpadTapMaxDuration,
+        maxTravel: Double = Config.touchpadTapMaxMovement,
         onTap: (TouchpadRegion) -> Void
     ) {
         let position = CGPoint(x: CGFloat(state.x), y: CGFloat(state.y))
@@ -172,8 +228,8 @@ struct SteamControllerTouchpadTapTracker {
 
         let duration = now - touchStartTime
         if !clickFiredDuringTouch,
-           duration < Config.touchpadTapMaxDuration,
-           maxDistanceFromStart < Config.touchpadTapMaxMovement {
+           duration < maxDuration,
+           maxDistanceFromStart < maxTravel {
             onTap(TouchpadRegion.from(position: lastTouchPosition))
         }
 
@@ -559,6 +615,7 @@ final class SteamControllerHIDController {
     let deviceName: String
 	let physicalDeviceIdentity: SteamControllerPhysicalDeviceIdentity
 
+    var touchpadTuningProvider: (() -> TouchpadTuning)?
     var onActivated: ((SteamControllerHIDController) -> Void)?
 	var onWirelessConnectionChanged: ((SteamControllerHIDController, SteamControllerWirelessState) -> Void)?
     var onButtonAction: ((ControllerButton, Bool) -> Void)?
@@ -945,15 +1002,22 @@ final class SteamControllerHIDController {
 
     /// Triton discrete click command, including its report ID. SDL specifies
     /// four bytes and a side bitmask (1 = left, 2 = right), not an actuator index.
-    static func touchpadClickOutputReport(side: SteamTouchpadSide) -> [UInt8] {
+    static func touchpadClickOutputReport(side: SteamTouchpadSide, strength: Double = 0.6, tap: Bool = false) -> [UInt8] {
         let sideMask: UInt8 = side == .left ? 0x01 : 0x02
-        return [0x82, sideMask, 0x02, UInt8(bitPattern: Int8(-18))]
+        let gain = Int8((-42 + min(1, max(0, strength)) * 40).rounded())
+        return [0x82, sideMask, tap ? 0x01 : 0x02, UInt8(bitPattern: gain)]
     }
 
-    /// Called only by the same debounced physical press event as the mouse click.
+    /// Called by the debounced physical press or the separately recognized tap.
     /// The firmware click is finite; sending a delayed stop would truncate it.
-    func playTouchpadClickHaptic(side: SteamTouchpadSide) {
-        let report = Self.touchpadClickOutputReport(side: side)
+    func playTouchpadClickHaptic(side: SteamTouchpadSide, tap: Bool = false) {
+        let tuning = touchpadTuningProvider?() ?? .default
+        guard tap ? tuning.tapFeedback : tuning.clickFeedback else { return }
+        let strength = tap
+            ? (side == .left ? tuning.leftTapStrength : tuning.rightTapStrength)
+            : (side == .left ? tuning.leftClickStrength : tuning.rightClickStrength)
+        guard strength > 0 else { return }
+        let report = Self.touchpadClickOutputReport(side: side, strength: strength, tap: tap)
         hapticOutputQueue.async { [weak self] in
             guard let self else { return }
             let result = self.setOutputReport(reportID: report[0], report: report)
@@ -1131,6 +1195,7 @@ final class SteamControllerHIDController {
         let left = Self.leftTouchpadState(from: parsed)
         let right = Self.rightTouchpadState(from: parsed)
         let now = CFAbsoluteTimeGetCurrent()
+        let tuning = touchpadTuningProvider?() ?? .default
 
         dispatchTouchpadClickIfNeeded(
             side: .left,
@@ -1158,22 +1223,22 @@ final class SteamControllerHIDController {
 
         leftTouchpadTapTracker.update(
             state: left,
-            now: now
+            now: now, maxDuration: tuning.tapDuration, maxTravel: tuning.tapTravel
         ) { [weak self] region in
             self?.queueTouchpadTap(side: .left, region: region, now: now)
         }
         rightTouchpadTapTracker.update(
             state: right,
-            now: now
+            now: now, maxDuration: tuning.tapDuration, maxTravel: tuning.tapTravel
         ) { [weak self] region in
             self?.queueTouchpadTap(side: .right, region: region, now: now)
         }
 
-        // Desktop feedback is click-only. Sliding, scrolling and dragging do
+        // Desktop feedback is tap/press-only. Sliding, scrolling and dragging do
         // not emit movement haptics or introduce a separate pressure threshold.
 
-        let filteredLeft = leftTouchpadMotionFilter.update(left, now: now)
-        let filteredRight = rightTouchpadMotionFilter.update(right, now: now)
+        let filteredLeft = leftTouchpadMotionFilter.update(left, now: now, radius: tuning.leftJitter, guardTime: tuning.liftGuard, clickSettle: tuning.clickSettle, dragTravel: tuning.dragTravel, tapDuration: tuning.tapDuration, tapTravel: tuning.tapTravel)
+        let filteredRight = rightTouchpadMotionFilter.update(right, now: now, radius: tuning.rightJitter, guardTime: tuning.liftGuard, clickSettle: tuning.clickSettle, dragTravel: tuning.dragTravel, tapDuration: tuning.tapDuration, tapTravel: tuning.tapTravel)
         if shouldDispatchTouchpad(lastLeftTouchpad, current: filteredLeft) {
             onLeftTouchpadChanged?(filteredLeft.x, filteredLeft.y, filteredLeft.isTouching)
             lastLeftTouchpad = filteredLeft
@@ -1352,6 +1417,7 @@ final class SteamControllerHIDController {
 
     private func flushPendingTouchpadTaps(now: TimeInterval) {
         for (side, region) in touchpadTapGate.flush(now: now) {
+            playTouchpadClickHaptic(side: side, tap: true)
             onTouchpadTapAction?(side, region)
         }
     }

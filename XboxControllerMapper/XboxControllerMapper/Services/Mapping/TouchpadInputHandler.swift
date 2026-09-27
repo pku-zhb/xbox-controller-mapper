@@ -111,14 +111,16 @@ extension MappingEngine {
 
         let magnitude = Double(hypot(smoothedDelta.x, smoothedDelta.y))
         let deadzone = controllerService.threadSafeIsSteamController
-            ? max(settings.touchpadDeadzone, Config.steamTouchpadDeadzoneFloor)
+            ? 0.00001
             : settings.touchpadDeadzone
         guard magnitude > deadzone else { return }
 
         let accelerationGain = JoystickMath.touchpadAccelerationGain(
             distance: Double(hypot(delta.x, delta.y)),
             elapsed: resetSmoothing ? 0 : now - lastSampleTime,
-            amount: settings.touchpadAcceleration
+            amount: settings.touchpadAcceleration,
+            slowGain: settings.touchpadTuning.slowGain, fastGain: settings.touchpadTuning.fastGain,
+            startSpeed: settings.touchpadTuning.accelerationStart, fullSpeed: settings.touchpadTuning.accelerationEnd
         )
         let sensitivity = Config.touchpadNativeScale
             * settings.touchpadSensitivityMultiplier * accelerationGain
@@ -157,12 +159,7 @@ extension MappingEngine {
         guard !snapshot.isGestureActive else { return }
 
         let magnitude = Double(hypot(delta.x, delta.y))
-        let deadzone = max(
-            snapshot.settings.touchpadDeadzone,
-            Config.steamTouchpadDeadzoneFloor,
-            Config.touchpadPanDeadzone
-        )
-        guard magnitude > deadzone else { return }
+        guard magnitude > 0.00001 else { return }
 
         let scale = snapshot.settings.touchpadPanSensitivity * Config.touchpadPanSensitivityMultiplier
         var dx = -Double(delta.x) * scale
@@ -174,16 +171,13 @@ extension MappingEngine {
             dy = -dy
         }
 
-        inputSimulator.scroll(
-            event: ScrollEvent(
-                dx: CGFloat(dx),
-                dy: CGFloat(dy),
-                phase: nil,
-                momentumPhase: nil,
-                isContinuous: false,
-                flags: inputSimulator.getHeldModifiers()
-            )
-        )
+        let now = CFAbsoluteTimeGetCurrent()
+        // Preserve the existing sensitivity; InputSimulator already uses pixel units.
+        let events = state.lock.withLock { state.desktopScroll.move(CGPoint(x: dx, y: dy), now: now) }
+        for var event in events {
+            event.flags = inputSimulator.getHeldModifiers()
+            inputSimulator.scroll(event: event)
+        }
         usageStatsService?.recordScrollDistance(dx: dx, dy: dy)
     }
 
@@ -368,6 +362,26 @@ extension MappingEngine {
             return (settings, wasActive, state.smoothedTouchpadCenterDelta, state.smoothedTouchpadDistanceDelta, state.lastTouchpadGestureSampleTime, state.smoothedTouchpadPanVelocity)
         }) else { return }
         let settings = snapshot.settings
+        if isSteamController {
+            let result = state.lock.withLock {
+                let result = state.desktopZoom.update(
+                    distance: steamBothPadsMoving ? gesture.distanceDelta : 0,
+                    pan: Double(hypot(gesture.centerDelta.x, gesture.centerDelta.y)),
+                    touching: gesture.isPrimaryTouching && gesture.isSecondaryTouching,
+                    native: settings.touchpadUseNativeZoom, ratio: settings.touchpadZoomToPanRatio,
+                    now: CFAbsoluteTimeGetCurrent(), tuning: settings.touchpadTuning
+                )
+                state.isTouchpadGestureActive = result.active
+                return result
+            }
+            if result.end { postMagnifyGestureEvent(0, 2) }
+            if result.begin { postMagnifyGestureEvent(0, 0) }
+            if result.magnification != 0 { postMagnifyGestureEvent(result.magnification, 1) }
+            for _ in 0..<abs(result.steps) {
+                inputSimulator.pressKey(result.steps > 0 ? KeyCodeMapping.equal : KeyCodeMapping.minus, modifiers: [.maskCommand])
+            }
+            return
+        }
         let wasActive = snapshot.wasActive
         var smoothedCenter = snapshot.smoothedCenter
         var smoothedDistance = snapshot.smoothedDistance
@@ -675,6 +689,22 @@ extension MappingEngine {
     /// - Precondition: Must be called on pollingQueue
     nonisolated func processTouchpadMomentumTick(now: CFAbsoluteTime) {
         dispatchPrecondition(condition: .onQueue(pollingQueue))
+        if controllerService.threadSafeIsSteamController {
+            let contact = controllerService.readStorage(\.isSteamLeftTouchpadTouching)
+            let events: [ScrollEvent] = state.lock.withLock {
+                guard state.isEnabled, !state.isLocked, let settings = state.joystickSettings else {
+                    state.desktopScroll = DesktopScrollDynamics()
+                    return []
+                }
+                return state.desktopScroll.tick(touching: contact, suppressed: state.isTouchpadGestureActive,
+                                                now: now, tuning: settings.touchpadTuning)
+            }
+            for var event in events {
+                event.flags = inputSimulator.getHeldModifiers()
+                inputSimulator.scroll(event: event)
+            }
+            return
+        }
         guard let snapshot = state.lock.withLock({ () -> (isGestureActive: Bool, panActive: Bool, panVelocity: CGPoint, lastGestureTime: TimeInterval, velocity: CGPoint, wasActive: Bool, residualX: Double, residualY: Double, lastUpdate: TimeInterval)? in
             guard state.isEnabled, !state.isLocked else { return nil }
             return (state.isTouchpadGestureActive, state.touchpadPanActive, state.smoothedTouchpadPanVelocity, state.touchpadMomentumLastGestureTime, state.touchpadMomentumVelocity, state.touchpadMomentumWasActive, state.touchpadScrollResidualX, state.touchpadScrollResidualY, state.touchpadMomentumLastUpdate)
