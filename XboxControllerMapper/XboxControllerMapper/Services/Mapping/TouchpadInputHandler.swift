@@ -35,6 +35,16 @@ extension MappingEngine {
     nonisolated func processTouchpadMovement(_ delta: CGPoint) {
         dispatchPrecondition(condition: .onQueue(pollingQueue))
 
+        // Discard a queued pointer sample if the Steam pad has already reported
+        // finger-up. Otherwise queue latency can move the cursor after lift.
+        if controllerService.threadSafeIsSteamController && !controllerService.threadSafeIsTouchpadTouching {
+            state.lock.withLock {
+                state.smoothedTouchpadDelta = .zero
+                state.lastTouchpadSampleTime = 0
+            }
+            return
+        }
+
         // Single lock acquisition for all initial state reads
         guard let snapshot = state.lock.withLock({ () -> (settings: JoystickSettings, isGestureActive: Bool, swipeTypingActive: Bool, swipeTypingSensitivity: Double, smoothedDelta: CGPoint, lastSampleTime: TimeInterval)? in
             guard state.isEnabled, !state.isLocked, let settings = state.joystickSettings else { return nil }
@@ -105,7 +115,13 @@ extension MappingEngine {
             : settings.touchpadDeadzone
         guard magnitude > deadzone else { return }
 
-        let sensitivity = Config.touchpadNativeScale * settings.touchpadSensitivityMultiplier
+        let accelerationGain = JoystickMath.touchpadAccelerationGain(
+            distance: Double(hypot(delta.x, delta.y)),
+            elapsed: resetSmoothing ? 0 : now - lastSampleTime,
+            amount: settings.touchpadAcceleration
+        )
+        let sensitivity = Config.touchpadNativeScale
+            * settings.touchpadSensitivityMultiplier * accelerationGain
 		let analogPrecisionMultiplier: Double
 		if settings.analogPrecisionTriggerMode == .off {
 			analogPrecisionMultiplier = 1.0
@@ -132,6 +148,7 @@ extension MappingEngine {
     nonisolated func processSteamLeftTouchpadScroll(_ delta: CGPoint) {
         dispatchPrecondition(condition: .onQueue(pollingQueue))
         guard controllerService.threadSafeIsSteamController,
+              controllerService.readStorage(\.isSteamLeftTouchpadTouching),
               let snapshot = state.lock.withLock({ () -> (settings: JoystickSettings, isGestureActive: Bool)? in
                   guard state.isEnabled, !state.isLocked, let settings = state.joystickSettings else { return nil }
                   return (settings, state.isTouchpadGestureActive)

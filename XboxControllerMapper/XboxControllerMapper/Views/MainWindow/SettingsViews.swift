@@ -752,7 +752,7 @@ struct TouchpadSettingsView: View {
                             set: { updateSettings(\.touchpadAcceleration, $0) }
                         ),
                         range: 0...1,
-                        description: "0 = linear, 1 = max curve"
+                        description: "Slow swipes gain precision; fast swipes keep full speed. 0 = linear."
                     )
 
                     SliderRow(

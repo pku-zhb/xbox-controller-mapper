@@ -9,6 +9,47 @@ import GameController
 /// edits can't silently regress them.
 final class HIDReportParserTests: XCTestCase {
 
+    func testSteamTouchpadFilterRejectsRestingJitterOnEitherPad() {
+        for origin: Float in [-0.5, 0.5] {
+            var filter = SteamTouchpadMotionFilter()
+            _ = filter.update(.init(x: origin, y: 0, isTouching: true, isPressed: false), now: 0)
+            for index in 1...30 {
+                let jitter: Float = index.isMultiple(of: 2) ? 0.006 : -0.006
+                let result = filter.update(.init(x: origin + jitter, y: jitter, isTouching: true, isPressed: false), now: Double(index) * 0.004)
+                XCTAssertEqual(result.x, origin, accuracy: 0.0001)
+                XCTAssertEqual(result.y, 0, accuracy: 0.0001)
+            }
+        }
+    }
+
+    func testSteamTouchpadFilterDropsMultiFrameLiftNoiseAndResetsOnRetouch() {
+        var filter = SteamTouchpadMotionFilter()
+        _ = filter.update(.init(x: 0, y: 0, isTouching: true, isPressed: false), now: 0)
+        // Several noisy frames precede loss of contact, all within the guard.
+        for index in 1...3 {
+            let result = filter.update(.init(x: Float(index) * 0.03, y: 0, isTouching: true, isPressed: false), now: Double(index) * 0.004)
+            XCTAssertEqual(result.x, 0)
+        }
+        let lifted = filter.update(.init(x: 0, y: 0, isTouching: false, isPressed: false), now: 0.015)
+        XCTAssertFalse(lifted.isTouching)
+        let retouch = filter.update(.init(x: -0.6, y: 0.4, isTouching: true, isPressed: false), now: 1)
+        XCTAssertEqual(retouch.x, -0.6, accuracy: 0.0001)
+        let steady = filter.update(.init(x: -0.6, y: 0.4, isTouching: true, isPressed: false), now: 1.05)
+        XCTAssertEqual(steady.x, -0.6, accuracy: 0.0001)
+    }
+
+    func testSteamTouchpadFilterPreservesIntentionalMotionAndImmediateClickState() {
+        var filter = SteamTouchpadMotionFilter()
+        _ = filter.update(.init(x: 0, y: 0, isTouching: true, isPressed: false), now: 0)
+        _ = filter.update(.init(x: 0.1, y: 0, isTouching: true, isPressed: false), now: 0.004)
+        let clicked = filter.update(.init(x: 0.2, y: 0, isTouching: true, isPressed: true), now: 0.008)
+        XCTAssertTrue(clicked.isPressed, "Click threshold remains owned by the firmware")
+        let moved = filter.update(.init(x: 0.2, y: 0, isTouching: true, isPressed: true), now: 0.026)
+        XCTAssertEqual(moved.x, 0.188, accuracy: 0.0001)
+        let released = filter.update(.init(x: 0.2, y: 0, isTouching: true, isPressed: false), now: 0.03)
+        XCTAssertFalse(released.isPressed)
+    }
+
     // MARK: - Helpers
 
     private func makeReport(length: Int, configure: (UnsafeMutablePointer<UInt8>) -> Void) -> [UInt8] {
@@ -658,6 +699,18 @@ final class HIDReportParserTests: XCTestCase {
         XCTAssertEqual(payload[3], 0x01)
         XCTAssertEqual(payload[4], 0x06)
         XCTAssertEqual(payload[5], 0x00)
+    }
+
+    func testSteamController_PhysicalClickUsesFiniteTritonCommandAndSideMask() {
+        // Golden vectors from SDL's MsgHapticCommand: report, side, click, gain.
+        XCTAssertEqual(
+            SteamControllerHIDController.touchpadClickOutputReport(side: .left),
+            [0x82, 0x01, 0x02, 0xEE]
+        )
+        XCTAssertEqual(
+            SteamControllerHIDController.touchpadClickOutputReport(side: .right),
+            [0x82, 0x02, 0x02, 0xEE]
+        )
     }
 
     func testSteamController_HapticOutputReportPrefixesReportID() {

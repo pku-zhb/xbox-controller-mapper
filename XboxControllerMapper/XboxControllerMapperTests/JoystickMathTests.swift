@@ -6,6 +6,32 @@ import XCTest
 /// JoystickSettings — no formula reimplementations.
 final class JoystickMathTests: XCTestCase {
 
+    func testTouchpadAccelerationSlowsPrecisionMotionButPreservesFastSwipeCeiling() {
+        let slow = JoystickMath.touchpadAccelerationGain(distance: 0.001, elapsed: 0.01, amount: 0.75)
+        let medium = JoystickMath.touchpadAccelerationGain(distance: 0.02, elapsed: 0.01, amount: 0.75)
+        let fast = JoystickMath.touchpadAccelerationGain(distance: 0.06, elapsed: 0.01, amount: 0.75)
+        XCTAssertEqual(slow, 0.4, accuracy: 0.0001)
+        XCTAssertGreaterThan(medium, slow)
+        XCTAssertLessThan(medium, fast)
+        XCTAssertEqual(fast, 1, accuracy: 0.0001)
+    }
+
+    func testTouchpadAccelerationIsInvariantAcrossReportRates() {
+        let gains = [60.0, 120.0, 240.0].map { frequency in
+            JoystickMath.touchpadAccelerationGain(
+                distance: 2 / frequency, elapsed: 1 / frequency, amount: 0.75
+            )
+        }
+        XCTAssertEqual(gains[0], gains[1], accuracy: 0.0001)
+        XCTAssertEqual(gains[1], gains[2], accuracy: 0.0001)
+    }
+
+    func testTouchpadAccelerationCanBeDisabledAndDoesNotSpikeAfterIdle() {
+        XCTAssertEqual(JoystickMath.touchpadAccelerationGain(distance: 0.001, elapsed: 0.01, amount: 0), 1)
+        XCTAssertEqual(JoystickMath.touchpadAccelerationGain(distance: 0.06, elapsed: 0, amount: 0.75), 0.4, accuracy: 0.0001)
+        XCTAssertEqual(JoystickMath.touchpadAccelerationGain(distance: .nan, elapsed: 0.01, amount: 0.75), 1)
+    }
+
     // MARK: - Circular Deadzone Tests
 
     func testDeadzoneFiltersSmallInputs() {

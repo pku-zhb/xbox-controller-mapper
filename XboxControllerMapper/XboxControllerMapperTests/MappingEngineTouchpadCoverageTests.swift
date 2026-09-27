@@ -622,6 +622,7 @@ final class MappingEngineTouchpadCoverageTests: XCTestCase {
             profile.joystickSettings.touchpadSmoothing = 0
             profileManager.setActiveProfile(profile)
             controllerService.storage.isSteamController = true
+            controllerService.storage.isTouchpadTouching = true
             controllerService.storage.isTouchpadSecondaryTouching = true
             controllerService.storage.touchpadSecondaryLastTouchTime = CFAbsoluteTimeGetCurrent() + 10
         }
@@ -659,6 +660,7 @@ final class MappingEngineTouchpadCoverageTests: XCTestCase {
             profile.joystickSettings.touchpadSmoothing = 0
             profileManager.setActiveProfile(profile)
             controllerService.storage.isSteamController = true
+            controllerService.storage.isTouchpadTouching = true
         }
         await waitForTasks(0.15)
 
@@ -694,6 +696,7 @@ final class MappingEngineTouchpadCoverageTests: XCTestCase {
             profile.joystickSettings.touchpadPanSensitivity = 1.0
             profileManager.setActiveProfile(profile)
             controllerService.storage.isSteamController = true
+            controllerService.storage.isSteamLeftTouchpadTouching = true
         }
         await waitForTasks(0.15)
 
@@ -729,6 +732,7 @@ final class MappingEngineTouchpadCoverageTests: XCTestCase {
             profile.joystickSettings.touchpadInvertScrollY = true
             profileManager.setActiveProfile(profile)
             controllerService.storage.isSteamController = true
+            controllerService.storage.isSteamLeftTouchpadTouching = true
         }
         await waitForTasks(0.15)
 

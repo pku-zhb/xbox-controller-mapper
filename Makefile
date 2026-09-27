@@ -113,7 +113,7 @@ check-version-plist:
 # notarized build stays gated and contains no bypass code path.
 DEV_SWIFT_CONDITIONS = SWIFT_ACTIVE_COMPILATION_CONDITIONS='$$(inherited) DEV_BYPASS_LICENSE'
 # Do not load the unused official updater in ad-hoc signed local builds.
-DEV_LINKER_FLAGS = OTHER_LDFLAGS='$$(inherited) -Wl,-dead_strip_dylibs'
+DEV_LINKER_FLAGS = OTHER_LDFLAGS='$$(inherited) -Xlinker -dead_strip_dylibs'
 
 build: check-permissions check-version-plist
 ifeq ($(HAS_DEV_CERT),1)

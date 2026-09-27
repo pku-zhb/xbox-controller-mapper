@@ -210,4 +210,17 @@ extension ControllerService {
             )
         }
     }
+
+    nonisolated func playSteamTouchpadClickHaptic(side: SteamTouchpadSide) {
+        let sessionGeneration = currentHapticSessionGeneration()
+        hapticQueue.async { [weak self] in
+            guard let self,
+                  self.isCurrentHapticSession(sessionGeneration),
+                  self.readStorage(\.isSteamController) else { return }
+            self.steamHIDControllerLock.lock()
+            let controller = self.activeSteamHIDController
+            self.steamHIDControllerLock.unlock()
+            controller?.playTouchpadClickHaptic(side: side)
+        }
+    }
 }

@@ -71,6 +71,63 @@ struct SteamControllerTouchpadState: Equatable, Sendable {
     let isPressed: Bool
 }
 
+/// Filters coordinates only; firmware touch/click flags are never delayed or
+/// re-thresholded. A small spatial hysteresis rejects resting-finger noise,
+/// and a 16 ms tail is discarded on lift instead of moving the cursor/scroll.
+struct SteamTouchpadMotionFilter {
+    private struct Sample {
+        let position: CGPoint
+        let time: TimeInterval
+    }
+
+    static let hysteresisRadius: CGFloat = 0.012
+    static let releaseGuardInterval: TimeInterval = 0.016
+    private var anchor: CGPoint?
+    private var output = CGPoint.zero
+    private var pending: [Sample] = []
+
+    mutating func update(_ raw: SteamControllerTouchpadState, now: TimeInterval) -> SteamControllerTouchpadState {
+        guard raw.isTouching else {
+            anchor = nil
+            output = .zero
+            pending.removeAll(keepingCapacity: true)
+            return raw
+        }
+
+        let position = CGPoint(x: CGFloat(raw.x), y: CGFloat(raw.y))
+        if let center = anchor {
+            let dx = position.x - center.x
+            let dy = position.y - center.y
+            let distance = hypot(dx, dy)
+            if distance > Self.hysteresisRadius {
+                let ratio = (distance - Self.hysteresisRadius) / distance
+                anchor = CGPoint(x: center.x + dx * ratio, y: center.y + dy * ratio)
+            }
+            if let last = pending.last, now < last.time {
+                pending.removeAll(keepingCapacity: true)
+            }
+            pending.append(Sample(position: anchor ?? position, time: now))
+            var ready = 0
+            for sample in pending {
+                guard now - sample.time >= Self.releaseGuardInterval else { break }
+                output = sample.position
+                ready += 1
+            }
+            pending.removeFirst(ready)
+            // Bound storage even if an abnormal clock stops advancing.
+            if pending.count > 32 { pending.removeFirst(pending.count - 32) }
+        } else {
+            anchor = position
+            output = position
+        }
+
+        return SteamControllerTouchpadState(
+            x: Float(output.x), y: Float(output.y),
+            isTouching: raw.isTouching, isPressed: raw.isPressed
+        )
+    }
+}
+
 struct SteamControllerTouchpadTapTracker {
     private var wasTouching = false
     private var touchStartTime: TimeInterval = 0
@@ -546,6 +603,8 @@ final class SteamControllerHIDController {
     private var lastRightTrigger: (value: Float, pressed: Bool)?
     private var lastLeftTouchpad: SteamControllerTouchpadState?
     private var lastRightTouchpad: SteamControllerTouchpadState?
+    private var leftTouchpadMotionFilter = SteamTouchpadMotionFilter()
+    private var rightTouchpadMotionFilter = SteamTouchpadMotionFilter()
     private var lastLeftTouchpadClick: Bool?
     private var lastRightTouchpadClick: Bool?
     private var lastLeftTouchpadClickReleaseTime: TimeInterval = 0
@@ -718,6 +777,8 @@ final class SteamControllerHIDController {
 		lastRightTrigger = nil
 		lastLeftTouchpad = nil
 		lastRightTouchpad = nil
+        leftTouchpadMotionFilter = SteamTouchpadMotionFilter()
+        rightTouchpadMotionFilter = SteamTouchpadMotionFilter()
 		lastLeftTouchpadClick = nil
 		lastRightTouchpadClick = nil
 		lastLeftTouchpadClickReleaseTime = 0
@@ -880,6 +941,26 @@ final class SteamControllerHIDController {
             report[index + 1] = payload[index]
         }
         return report
+    }
+
+    /// Triton discrete click command, including its report ID. SDL specifies
+    /// four bytes and a side bitmask (1 = left, 2 = right), not an actuator index.
+    static func touchpadClickOutputReport(side: SteamTouchpadSide) -> [UInt8] {
+        let sideMask: UInt8 = side == .left ? 0x01 : 0x02
+        return [0x82, sideMask, 0x02, UInt8(bitPattern: Int8(-18))]
+    }
+
+    /// Called only by the same debounced physical press event as the mouse click.
+    /// The firmware click is finite; sending a delayed stop would truncate it.
+    func playTouchpadClickHaptic(side: SteamTouchpadSide) {
+        let report = Self.touchpadClickOutputReport(side: side)
+        hapticOutputQueue.async { [weak self] in
+            guard let self else { return }
+            let result = self.setOutputReport(reportID: report[0], report: report)
+            if result != kIOReturnSuccess {
+                NSLog("[ControllerKeys] Steam trackpad click haptic failed: 0x%08X", result)
+            }
+        }
     }
 
     static func lizardModeFeatureReport(enabled: Bool, includesReportID: Bool) -> [UInt8] {
@@ -1088,37 +1169,23 @@ final class SteamControllerHIDController {
             self?.queueTouchpadTap(side: .right, region: region, now: now)
         }
 
-        if leftTouchpadHapticTracker.update(state: left, now: now) {
-            playTouchpadHaptic(
-                side: .left,
-                intensity: Config.steamTouchpadMovementHapticIntensity,
-                sharpness: Config.steamTouchpadMovementHapticSharpness,
-                duration: Config.steamTouchpadMovementHapticDuration,
-                transient: true
-            )
-        }
-        if rightTouchpadHapticTracker.update(state: right, now: now) {
-            playTouchpadHaptic(
-                side: .right,
-                intensity: Config.steamTouchpadMovementHapticIntensity,
-                sharpness: Config.steamTouchpadMovementHapticSharpness,
-                duration: Config.steamTouchpadMovementHapticDuration,
-                transient: true
-            )
-        }
+        // Desktop feedback is click-only. Sliding, scrolling and dragging do
+        // not emit movement haptics or introduce a separate pressure threshold.
 
-        if shouldDispatchTouchpad(lastLeftTouchpad, current: left) {
-            onLeftTouchpadChanged?(left.x, left.y, left.isTouching)
-            lastLeftTouchpad = left
+        let filteredLeft = leftTouchpadMotionFilter.update(left, now: now)
+        let filteredRight = rightTouchpadMotionFilter.update(right, now: now)
+        if shouldDispatchTouchpad(lastLeftTouchpad, current: filteredLeft) {
+            onLeftTouchpadChanged?(filteredLeft.x, filteredLeft.y, filteredLeft.isTouching)
+            lastLeftTouchpad = filteredLeft
         } else if lastLeftTouchpad == nil {
-            lastLeftTouchpad = left
+            lastLeftTouchpad = filteredLeft
         }
 
-        if shouldDispatchTouchpad(lastRightTouchpad, current: right) {
-            onRightTouchpadChanged?(right.x, right.y, right.isTouching)
-            lastRightTouchpad = right
+        if shouldDispatchTouchpad(lastRightTouchpad, current: filteredRight) {
+            onRightTouchpadChanged?(filteredRight.x, filteredRight.y, filteredRight.isTouching)
+            lastRightTouchpad = filteredRight
         } else if lastRightTouchpad == nil {
-            lastRightTouchpad = right
+            lastRightTouchpad = filteredRight
         }
     }
 

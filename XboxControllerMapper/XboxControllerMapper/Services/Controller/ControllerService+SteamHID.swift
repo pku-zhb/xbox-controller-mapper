@@ -583,13 +583,7 @@ extension ControllerService {
     ) {
         updateSteamTouchpadClickMovementGate(side: side, state: state, pressed: pressed)
         if pressed {
-            playSteamTouchpadHaptic(
-                side: side,
-                intensity: Config.steamTouchpadClickHapticIntensity,
-                sharpness: Config.steamTouchpadClickHapticSharpness,
-                duration: Config.steamTouchpadClickHapticDuration,
-                transient: false
-            )
+            playSteamTouchpadClickHaptic(side: side)
         }
 
         let position = CGPoint(x: CGFloat(state.x), y: CGFloat(state.y))
