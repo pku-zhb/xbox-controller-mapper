@@ -50,6 +50,20 @@ final class HIDReportParserTests: XCTestCase {
         XCTAssertFalse(released.isPressed)
     }
 
+    func testFilteredSteamTouchpadPreservesEverySmallPositionChange() {
+        let initial = SteamControllerTouchpadState(x: 0.2, y: 0, isTouching: true, isPressed: false)
+        var previous = initial
+        for frame in 1...120 {
+            let sample = SteamControllerTouchpadState(x: 0.2 + Float(frame) * 0.0005, y: 0, isTouching: true, isPressed: false)
+            XCTAssertTrue(SteamControllerHIDController.shouldDispatchTouchpad(previous, current: sample))
+            previous = sample
+        }
+        XCTAssertFalse(SteamControllerHIDController.shouldDispatchTouchpad(previous, current: previous))
+        let lift = SteamControllerTouchpadState(x: 0, y: 0, isTouching: false, isPressed: false)
+        XCTAssertTrue(SteamControllerHIDController.shouldDispatchTouchpad(previous, current: lift))
+        XCTAssertFalse(SteamControllerHIDController.shouldDispatchTouchpad(lift, current: lift))
+    }
+
     // MARK: - Helpers
 
     private func makeReport(length: Int, configure: (UnsafeMutablePointer<UInt8>) -> Void) -> [UInt8] {

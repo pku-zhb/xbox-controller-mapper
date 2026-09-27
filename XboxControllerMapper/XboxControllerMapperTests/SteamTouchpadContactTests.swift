@@ -6,6 +6,33 @@ import CoreGraphics
 /// keyboard/mouse events. Contact loss must cancel queued cursor and scroll work.
 @MainActor
 final class SteamTouchpadContactTests: XCTestCase {
+    func testAlreadyFilteredSteamMotionHasNoSecondThresholdOrPendingFrame() {
+        let controller = ControllerService(enableHardwareMonitoring: false)
+        let simulator = MockInputSimulator()
+        controller.storage.isSteamController = true
+        controller.onInputEvent = { event in
+            if case .touchpadMoved(let delta) = event {
+                simulator.moveMouse(dx: delta.x, dy: delta.y)
+            }
+        }
+        defer {
+            controller.onInputEvent = nil
+            controller.cleanup()
+        }
+        controller.updateSteamTouchpad(side: .right, x: 0.2, y: 0, isTouching: true)
+        for frame in 1...100 {
+            controller.updateSteamTouchpad(side: .right, x: 0.2 + Float(frame) * 0.00025, y: 0, isTouching: true)
+        }
+        let moves = simulator.events.compactMap { event -> CGFloat? in
+            if case .moveMouse(let x, _) = event { return x }
+            return nil
+        }
+        XCTAssertEqual(moves.count, 100)
+        XCTAssertEqual(moves.reduce(0, +), 0.025, accuracy: 0.000001)
+        controller.updateSteamTouchpad(side: .right, x: 0, y: 0, isTouching: false)
+        XCTAssertEqual(simulator.events.count, 100, "Lifting must not replay motion")
+    }
+
     func testPointerAndScrollStopWhenContactEnds() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("steam-contact-test-\(UUID().uuidString)", isDirectory: true)

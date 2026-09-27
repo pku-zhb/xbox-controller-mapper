@@ -635,7 +635,6 @@ final class SteamControllerHIDController {
     private static let analogDispatchIntervalNanoseconds: UInt64 = 8_000_000
     private static let stickEpsilon: Float = 0.01
     private static let triggerEpsilon: Float = 0.01
-    private static let touchpadEpsilon: Float = 0.005
     private static let lizardModeReportID: UInt8 = 0x01
     private static let lizardModeCommand: UInt8 = 0x87
     private static let lizardModeSetting: UInt8 = 0x09
@@ -1239,14 +1238,14 @@ final class SteamControllerHIDController {
 
         let filteredLeft = leftTouchpadMotionFilter.update(left, now: now, radius: tuning.leftJitter, guardTime: tuning.liftGuard, clickSettle: tuning.clickSettle, dragTravel: tuning.dragTravel, tapDuration: tuning.tapDuration, tapTravel: tuning.tapTravel)
         let filteredRight = rightTouchpadMotionFilter.update(right, now: now, radius: tuning.rightJitter, guardTime: tuning.liftGuard, clickSettle: tuning.clickSettle, dragTravel: tuning.dragTravel, tapDuration: tuning.tapDuration, tapTravel: tuning.tapTravel)
-        if shouldDispatchTouchpad(lastLeftTouchpad, current: filteredLeft) {
+        if Self.shouldDispatchTouchpad(lastLeftTouchpad, current: filteredLeft) {
             onLeftTouchpadChanged?(filteredLeft.x, filteredLeft.y, filteredLeft.isTouching)
             lastLeftTouchpad = filteredLeft
         } else if lastLeftTouchpad == nil {
             lastLeftTouchpad = filteredLeft
         }
 
-        if shouldDispatchTouchpad(lastRightTouchpad, current: filteredRight) {
+        if Self.shouldDispatchTouchpad(lastRightTouchpad, current: filteredRight) {
             onRightTouchpadChanged?(filteredRight.x, filteredRight.y, filteredRight.isTouching)
             lastRightTouchpad = filteredRight
         } else if lastRightTouchpad == nil {
@@ -1475,14 +1474,15 @@ final class SteamControllerHIDController {
         }
     }
 
-    private func shouldDispatchTouchpad(_ previous: SteamControllerTouchpadState?, current: SteamControllerTouchpadState) -> Bool {
+    static func shouldDispatchTouchpad(_ previous: SteamControllerTouchpadState?, current: SteamControllerTouchpadState) -> Bool {
         guard let previous else { return current.isTouching || current.isPressed }
         if previous.isTouching != current.isTouching || previous.isPressed != current.isPressed {
             return true
         }
         guard current.isTouching else { return false }
-        return abs(previous.x - current.x) >= Self.touchpadEpsilon
-            || abs(previous.y - current.y) >= Self.touchpadEpsilon
+        // Coordinates have already passed spatial hysteresis and lift filtering.
+        // A second epsilon would batch slow motion into visible cursor jumps.
+        return previous.x != current.x || previous.y != current.y
     }
 
     private func shouldDispatchStick(_ previous: (x: Float, y: Float)?, x: Float, y: Float) -> Bool {

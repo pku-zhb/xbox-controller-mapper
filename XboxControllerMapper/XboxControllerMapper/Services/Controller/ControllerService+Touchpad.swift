@@ -454,7 +454,7 @@ extension ControllerService {
                 // Update touchStartPosition so the settle check uses the stable position
                 // (the initial touch position from hardware can be noisy/incorrect)
                 // NOTE: Do NOT update touchpadTouchStartTime - keep counting from original touch
-                if storage.touchpadFramesSinceTouch <= 2 {
+                if !storage.isSteamController && storage.touchpadFramesSinceTouch <= 2 {
                     storage.touchpadPosition = newPosition
                     storage.touchpadPreviousPosition = newPosition
                     storage.touchpadTouchStartPosition = newPosition
@@ -475,7 +475,7 @@ extension ControllerService {
                     : Config.touchpadClickMovementThreshold
                 let belowMovementThreshold = distanceFromStart < clickMovementThreshold
 
-                if inSettlePeriod && belowMovementThreshold {
+                if !storage.isSteamController && inSettlePeriod && belowMovementThreshold {
                     // Still settling - update position but don't generate movement
                     storage.touchpadPosition = newPosition
                     storage.touchpadPreviousPosition = newPosition
@@ -547,11 +547,12 @@ extension ControllerService {
 					}
 					let circularScrollActive = circularScrollAngleDelta != nil || storage.appleTVRemoteCircularScrollActive
 
-				// Apply the PREVIOUS pending delta (if any), then store current as pending.
-				// This 1-frame delay filters out artifacts right before finger lift.
-				let previousPending = circularScrollActive ? nil : storage.pendingTouchpadDelta
-				// Store current delta as pending for next frame unless ring scrolling owns this motion.
-				if circularScrollActive {
+				// Generic devices delay one frame to reject lift artifacts. Steam
+                // already has a time-based lift guard in its HID motion filter.
+				let previousPending = circularScrollActive ? nil : (storage.isSteamController ? delta : storage.pendingTouchpadDelta)
+                // Steam coordinates are already filtered at HID ingress. Preserve
+                // every small delta and avoid delaying it again until another move.
+				if circularScrollActive || storage.isSteamController {
 					storage.pendingTouchpadDelta = nil
 				} else if abs(delta.x) > 0.001 || abs(delta.y) > 0.001 {
 					storage.pendingTouchpadDelta = delta
@@ -835,7 +836,7 @@ extension ControllerService {
 				}
 
                 // Skip first 2 frames after touch to let position settle
-                if storage.touchpadSecondaryFramesSinceTouch <= 2 {
+                if !storage.isSteamController && storage.touchpadSecondaryFramesSinceTouch <= 2 {
                     storage.touchpadSecondaryPosition = newPosition
                     storage.touchpadSecondaryPreviousPosition = newPosition
                     storage.lock.unlock()
