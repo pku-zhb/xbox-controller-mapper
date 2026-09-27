@@ -834,11 +834,14 @@ struct ButtonMappingSheet: View {
 
     private var repeatDelayControl: some View {
         VStack(alignment: .leading) {
-            Text("Initial Repeat Delay: \(Int(repeatInitialDelay * 1000)) ms")
+            HStack {
+                Text("Initial Repeat Delay")
+                SettingInfoTip(title: "Initial Repeat Delay", text: "Press once immediately, then repeat after this delay while held. Repeat Rate controls how quickly subsequent actions repeat.")
+                Spacer()
+                Text("\(Int(repeatInitialDelay * 1000)) ms").monospacedDigit()
+            }
             Slider(value: $repeatInitialDelay, in: 0...1.5, step: 0.05)
                 .accessibilityLabel("Initial Repeat Delay")
-            Text("Press once immediately, then repeat after this delay while held.")
-                .font(.caption).foregroundColor(.secondary)
         }
     }
 
