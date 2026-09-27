@@ -112,6 +112,8 @@ check-version-plist:
 # pipeline (Scripts/sign-and-notarize.sh) never sets this, so the distributed,
 # notarized build stays gated and contains no bypass code path.
 DEV_SWIFT_CONDITIONS = SWIFT_ACTIVE_COMPILATION_CONDITIONS='$$(inherited) DEV_BYPASS_LICENSE'
+# Do not load the unused official updater in ad-hoc signed local builds.
+DEV_LINKER_FLAGS = OTHER_LDFLAGS='$$(inherited) -Wl,-dead_strip_dylibs'
 
 build: check-permissions check-version-plist
 ifeq ($(HAS_DEV_CERT),1)
@@ -121,6 +123,7 @@ ifeq ($(HAS_DEV_CERT),1)
 		MARKETING_VERSION=$(MARKETING_VERSION) \
 		CURRENT_PROJECT_VERSION=$(BUILD_NUMBER) \
 		$(DEV_SWIFT_CONDITIONS) \
+		$(DEV_LINKER_FLAGS) \
 		-allowProvisioningUpdates \
 		build
 else
@@ -133,12 +136,18 @@ else
 		MARKETING_VERSION=$(MARKETING_VERSION) \
 		CURRENT_PROJECT_VERSION=$(BUILD_NUMBER) \
 		$(DEV_SWIFT_CONDITIONS) \
+		$(DEV_LINKER_FLAGS) \
 		build
 endif
 	$(MAKE) sign
 
 # Keep the app's TCC identity stable across local rebuilds.
 sign:
+	@if [ -d "$(APP_PATH)/Contents/Frameworks/Sparkle.framework" ]; then \
+		codesign --force --options runtime --timestamp=none \
+			--sign "$(SIGN_IDENTITY)" --preserve-metadata=entitlements \
+			"$(APP_PATH)/Contents/Frameworks/Sparkle.framework"; \
+	fi
 	codesign --force --options runtime --timestamp=none \
 		--sign "$(SIGN_IDENTITY)" --preserve-metadata=entitlements "$(APP_PATH)"
 	codesign --verify --strict "$(APP_PATH)"

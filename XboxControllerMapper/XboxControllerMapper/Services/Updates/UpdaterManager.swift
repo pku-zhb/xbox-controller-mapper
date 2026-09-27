@@ -1,7 +1,9 @@
 import Foundation
 import SwiftUI
 import Combine
+#if !DEV_BYPASS_LICENSE
 import Sparkle
+#endif
 
 /// Wraps Sparkle's standard updater so SwiftUI can drive "Check for Updates"
 /// and reflect whether a check is currently allowed.
@@ -17,7 +19,9 @@ final class UpdaterManager: ObservableObject {
 	private static let usageAnalyticsDefaultsKey = "telemetryEnabled"
 	private static let sparkleProfileDefaultsKey = "SUSendProfileInfo"
 
+#if !DEV_BYPASS_LICENSE
     private var updaterController: SPUStandardUpdaterController?
+#endif
 
     /// Mirrors Sparkle's `canCheckForUpdates` so the menu/button can disable
     /// itself while a check is already in flight.
@@ -27,6 +31,7 @@ final class UpdaterManager: ObservableObject {
 
     /// Begins Sparkle's scheduled-update lifecycle. Safe to call more than once.
     func start() {
+#if !DEV_BYPASS_LICENSE
         guard updaterController == nil else { return }
         let controller = SPUStandardUpdaterController(
             startingUpdater: true,
@@ -38,18 +43,24 @@ final class UpdaterManager: ObservableObject {
             .receive(on: RunLoop.main)
             .assign(to: &$canCheckForUpdates)
         updaterController = controller
+#endif
+        // Local builds stay on source-managed updates and do not load Sparkle.
     }
 
     /// Triggers a user-initiated update check (shows Sparkle's UI).
     func checkForUpdates() {
+#if !DEV_BYPASS_LICENSE
         updaterController?.updater.checkForUpdates()
+#endif
     }
 
     /// Keeps Sparkle's weekly system profile under the same privacy control as
     /// ControllerKeys lifecycle telemetry. Update checks still work when off.
 	func setUsageAnalyticsEnabled(_ enabled: Bool) {
 		UserDefaults.standard.set(enabled, forKey: Self.sparkleProfileDefaultsKey)
+#if !DEV_BYPASS_LICENSE
 		updaterController?.updater.sendsSystemProfile = enabled
+#endif
 	}
 
 	private static var usageAnalyticsEnabled: Bool {
