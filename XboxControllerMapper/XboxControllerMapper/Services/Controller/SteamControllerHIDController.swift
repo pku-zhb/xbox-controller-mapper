@@ -612,6 +612,7 @@ struct SteamControllerHIDParser {
 
 final class SteamControllerHIDController {
     let device: IOHIDDevice
+    let registryEntryID: UInt64?
     let deviceName: String
 	let physicalDeviceIdentity: SteamControllerPhysicalDeviceIdentity
 
@@ -702,6 +703,7 @@ final class SteamControllerHIDController {
 
     init(device: IOHIDDevice) {
         self.device = device
+        self.registryEntryID = Self.registryEntryID(for: device)
         self.deviceName = IOHIDDeviceGetProperty(device, kIOHIDProductKey as CFString) as? String ?? "Steam Controller"
 		self.physicalDeviceIdentity = SteamControllerPhysicalDeviceIdentity(
 			vendorID: IOHIDDeviceGetProperty(device, kIOHIDVendorIDKey as CFString) as? Int ?? 0,
@@ -710,6 +712,24 @@ final class SteamControllerHIDController {
 			serialNumber: IOHIDDeviceGetProperty(device, kIOHIDSerialNumberKey as CFString) as? String ?? "",
 			transport: IOHIDDeviceGetProperty(device, kIOHIDTransportKey as CFString) as? String ?? ""
 		)
+    }
+
+    static func registryEntryID(for device: IOHIDDevice) -> UInt64? {
+        var identifier: UInt64 = 0
+        guard IORegistryEntryGetRegistryEntryID(IOHIDDeviceGetService(device), &identifier) == kIOReturnSuccess,
+              identifier != 0 else { return nil }
+        return identifier
+    }
+
+    static func isSameHIDService(_ lhs: UInt64?, _ rhs: UInt64?, sameObject: Bool) -> Bool {
+        if let lhs, let rhs { return lhs == rhs }
+        return sameObject
+    }
+
+    /// macOS can expose multiple IOHIDDevice wrappers for one BLE service when
+    /// matching both mouse and vendor usages. Each wrapper must share one reader.
+    func representsSameHIDService(as other: IOHIDDevice) -> Bool {
+        Self.isSameHIDService(registryEntryID, Self.registryEntryID(for: other), sameObject: device == other)
     }
 
 	var isWirelessReceiver: Bool {

@@ -215,7 +215,7 @@ extension ControllerService {
 
     func steamControllerDeviceAppeared(_ device: IOHIDDevice) {
         guard SteamControllerHIDController.supportsDevice(device) else { return }
-        guard !steamHIDControllers.contains(where: { $0.device == device }) else { return }
+        guard !steamHIDControllers.contains(where: { $0.representsSameHIDService(as: device) }) else { return }
         steamTrackpadCompatibilityOverride.keepBuiltInTrackpadEnabled()
 
         let controller = SteamControllerHIDController(device: device)
@@ -293,9 +293,9 @@ extension ControllerService {
     }
 
     func steamControllerDeviceRemoved(_ device: IOHIDDevice) {
-        guard let index = steamHIDControllers.firstIndex(where: { $0.device == device }) else { return }
+        guard let index = steamHIDControllers.firstIndex(where: { $0.representsSameHIDService(as: device) }) else { return }
         let controller = steamHIDControllers.remove(at: index)
-        let wasActive = steamHIDActiveDevice == device
+        let wasActive = steamHIDActiveDevice == controller.device
         steamHIDRunLoop.perform {
             controller.stop()
         }

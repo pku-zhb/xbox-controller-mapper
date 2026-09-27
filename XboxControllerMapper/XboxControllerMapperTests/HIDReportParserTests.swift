@@ -64,6 +64,22 @@ final class HIDReportParserTests: XCTestCase {
         XCTAssertFalse(SteamControllerHIDController.shouldDispatchTouchpad(lift, current: lift))
     }
 
+    func testSteamHIDAliasesShareOneReaderButDistinctServicesStaySeparate() {
+        // Reproduced on BLE: mouse/vendor matches have different object pointers
+        // but the same registry ID. Pointer equality alone created two readers.
+        XCTAssertTrue(SteamControllerHIDController.isSameHIDService(101, 101, sameObject: false))
+        XCTAssertFalse(SteamControllerHIDController.isSameHIDService(101, 102, sameObject: false))
+        XCTAssertFalse(SteamControllerHIDController.isSameHIDService(nil, nil, sameObject: false))
+        XCTAssertTrue(SteamControllerHIDController.isSameHIDService(nil, nil, sameObject: true))
+        var admitted: [UInt64] = []
+        for id: UInt64 in [101, 101, 102, 102] {
+            if !admitted.contains(where: { SteamControllerHIDController.isSameHIDService($0, id, sameObject: false) }) {
+                admitted.append(id)
+            }
+        }
+        XCTAssertEqual(admitted, [101, 102])
+    }
+
     // MARK: - Helpers
 
     private func makeReport(length: Int, configure: (UnsafeMutablePointer<UInt8>) -> Void) -> [UInt8] {
