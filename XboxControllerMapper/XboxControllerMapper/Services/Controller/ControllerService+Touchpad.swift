@@ -623,11 +623,11 @@ extension ControllerService {
                 storage.touchpadWasTwoFingerDuringTouch = secondaryFresh
                 storage.touchpadTwoFingerGestureDistance = 0  // Reset for new touch session
                 storage.touchpadTwoFingerPinchDistance = 0
-                // Block movement if this touch starts within cooldown of a previous tap
-                // This prevents double-tap from causing mouse movement between taps
-                if (now - storage.touchpadLastTapTime) < Config.touchpadTapCooldown {
-                    storage.touchpadMovementBlocked = true
-                }
+                // Generic touchpads suppress motion between double-tap contacts.
+                // Steam already arbitrates tap vs. slide in its HID motion filter;
+                // this legacy latch would freeze the entire next swipe until lift.
+                storage.touchpadMovementBlocked = !storage.isSteamController &&
+                    (now - storage.touchpadLastTapTime) < Config.touchpadTapCooldown
                 if storage.touchpadClickArmed {
                     storage.touchpadClickStartPosition = newPosition
                 }

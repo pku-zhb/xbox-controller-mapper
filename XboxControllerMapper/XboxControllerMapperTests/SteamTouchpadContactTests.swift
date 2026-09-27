@@ -33,6 +33,42 @@ final class SteamTouchpadContactTests: XCTestCase {
         XCTAssertEqual(simulator.events.count, 100, "Lifting must not replay motion")
     }
 
+    func testSteamSwipeImmediatelyAfterTapDoesNotLatchMovementBlock() {
+        let controller = ControllerService(enableHardwareMonitoring: false)
+        let simulator = MockInputSimulator()
+        controller.storage.isSteamController = true
+        controller.onInputEvent = { event in
+            if case .touchpadMoved(let delta) = event { simulator.moveMouse(dx: delta.x, dy: delta.y) }
+        }
+        defer {
+            controller.onInputEvent = nil
+            controller.cleanup()
+        }
+        // Complete a tap, then start another contact inside the legacy 200 ms cooldown.
+        controller.updateSteamTouchpad(side: .right, x: 0.2, y: 0, isTouching: true)
+        controller.updateSteamTouchpad(side: .right, x: 0, y: 0, isTouching: false)
+        controller.updateSteamTouchpad(side: .right, x: 0.2, y: 0, isTouching: true)
+        controller.updateSteamTouchpad(side: .right, x: 0.25, y: 0, isTouching: true)
+        controller.updateSteamTouchpad(side: .right, x: 0.3, y: 0, isTouching: true)
+        XCTAssertFalse(controller.readStorage(\.touchpadMovementBlocked))
+        let movement = simulator.events.compactMap { event -> CGFloat? in
+            if case .moveMouse(let x, _) = event { return x }; return nil
+        }.reduce(0, +)
+        XCTAssertEqual(movement, 0.1, accuracy: 0.000001)
+    }
+
+    func testGenericTouchpadRetainsItsDoubleTapMovementGuard() {
+        let controller = ControllerService(enableHardwareMonitoring: false)
+        controller.storage.isSteamController = false
+        defer { controller.cleanup() }
+        controller.updateTouchpad(x: 0.2, y: 0, isTouching: true)
+        controller.updateTouchpad(x: 0, y: 0, isTouching: false)
+        controller.updateTouchpad(x: 0.2, y: 0, isTouching: true)
+        XCTAssertTrue(controller.readStorage(\.touchpadMovementBlocked))
+        controller.updateTouchpad(x: 0, y: 0, isTouching: false)
+        XCTAssertFalse(controller.readStorage(\.touchpadMovementBlocked))
+    }
+
     func testPointerAndScrollStopWhenContactEnds() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("steam-contact-test-\(UUID().uuidString)", isDirectory: true)
